@@ -2053,34 +2053,60 @@ static inline WDataOutP VL_RTOIROUND_W_D(int obits, WDataOutP owp, double lhs) V
 // Range assignments
 
 // EMIT_RULE: VL_ASSIGNRANGE:  rclean=dirty;
-static inline void VL_ASSIGNSEL_II(int rbits, int obits, int lsb, CData& lhsr, IData rhs) VL_PURE {
-    _vl_insert_II(lhsr, rhs, lsb + obits - 1, lsb, rbits);
+static inline void VL_ASSIGNSEL_II(int rbits, int obits, int lsb, CData& lhsr, IData rhs,
+                                   int roffset = 0) VL_PURE {
+    _vl_insert_II(lhsr, rhs >> roffset, lsb + obits - 1, lsb, rbits);
 }
-static inline void VL_ASSIGNSEL_II(int rbits, int obits, int lsb, SData& lhsr, IData rhs) VL_PURE {
-    _vl_insert_II(lhsr, rhs, lsb + obits - 1, lsb, rbits);
+static inline void VL_ASSIGNSEL_II(int rbits, int obits, int lsb, SData& lhsr, IData rhs,
+                                   int roffset = 0) VL_PURE {
+    _vl_insert_II(lhsr, rhs >> roffset, lsb + obits - 1, lsb, rbits);
 }
-static inline void VL_ASSIGNSEL_II(int rbits, int obits, int lsb, IData& lhsr, IData rhs) VL_PURE {
-    _vl_insert_II(lhsr, rhs, lsb + obits - 1, lsb, rbits);
+static inline void VL_ASSIGNSEL_II(int rbits, int obits, int lsb, IData& lhsr, IData rhs,
+                                   int roffset = 0) VL_PURE {
+    _vl_insert_II(lhsr, rhs >> roffset, lsb + obits - 1, lsb, rbits);
 }
-static inline void VL_ASSIGNSEL_QI(int rbits, int obits, int lsb, QData& lhsr, IData rhs) VL_PURE {
-    _vl_insert_QQ(lhsr, rhs, lsb + obits - 1, lsb, rbits);
+static inline void VL_ASSIGNSEL_QI(int rbits, int obits, int lsb, QData& lhsr, IData rhs,
+                                   int roffset = 0) VL_PURE {
+    _vl_insert_QQ(lhsr, rhs >> roffset, lsb + obits - 1, lsb, rbits);
 }
-static inline void VL_ASSIGNSEL_QQ(int rbits, int obits, int lsb, QData& lhsr, QData rhs) VL_PURE {
-    _vl_insert_QQ(lhsr, rhs, lsb + obits - 1, lsb, rbits);
+static inline void VL_ASSIGNSEL_QQ(int rbits, int obits, int lsb, QData& lhsr, QData rhs,
+                                   int roffset = 0) VL_PURE {
+    _vl_insert_QQ(lhsr, rhs >> roffset, lsb + obits - 1, lsb, rbits);
 }
 // static inline void VL_ASSIGNSEL_IIIW(int obits, int lsb, IData& lhsr, WDataInP const rwp)
 // VL_MT_SAFE { Illegal, as lhs width >= rhs width
-static inline void VL_ASSIGNSEL_WI(int rbits, int obits, int lsb, WDataOutP iowp,
-                                   IData rhs) VL_MT_SAFE {
-    _vl_insert_WI(iowp, rhs, lsb + obits - 1, lsb, rbits);
+static inline void VL_ASSIGNSEL_WI(int rbits, int obits, int lsb, WDataOutP iowp, IData rhs,
+                                   int roffset = 0) VL_MT_SAFE {
+    _vl_insert_WI(iowp, rhs >> roffset, lsb + obits - 1, lsb, rbits);
 }
-static inline void VL_ASSIGNSEL_WQ(int rbits, int obits, int lsb, WDataOutP iowp,
-                                   QData rhs) VL_MT_SAFE {
-    _vl_insert_WQ(iowp, rhs, lsb + obits - 1, lsb, rbits);
+static inline void VL_ASSIGNSEL_WQ(int rbits, int obits, int lsb, WDataOutP iowp, QData rhs,
+                                   int roffset = 0) VL_MT_SAFE {
+    _vl_insert_WQ(iowp, rhs >> roffset, lsb + obits - 1, lsb, rbits);
 }
 static inline void VL_ASSIGNSEL_WW(int rbits, int obits, int lsb, WDataOutP iowp,
-                                   WDataInP const rwp) VL_MT_SAFE {
-    _vl_insert_WW(iowp, rwp, lsb + obits - 1, lsb, rbits);
+                                   WDataInP const rwp, int roffset = 0) VL_MT_SAFE {
+    int wordoff = roffset / VL_EDATASIZE;
+    if (roffset & VL_SIZEBITS_E != 0) {
+        int upperbits = VL_EDATASIZE - (roffset & VL_SIZEBITS_E);
+        int w = upperbits > obits ? obits : upperbits;
+
+        // TODO: Use `if constexpr` when upgrading required std to c++17
+        if (sizeof(EData) <= sizeof(IData)) {
+            _vl_insert_WI(iowp, rwp[wordoff] >> (roffset & VL_SIZEBITS_E), lsb + w - 1, lsb,
+                          rbits);
+        } else {
+            // If we can't assume width of EData, we use slower _vl_insert_WQ
+            // to avoid bits truncation.
+            _vl_insert_WQ(iowp, rwp[wordoff] >> (roffset & VL_SIZEBITS_E), lsb + w - 1, lsb,
+                          rbits);
+        }
+
+        if (w >= obits) return;
+        lsb += w;
+        obits -= w;
+        wordoff += 1;
+    }
+    _vl_insert_WW(iowp, rwp + wordoff, lsb + obits - 1, lsb, rbits);
 }
 
 //======================================================================

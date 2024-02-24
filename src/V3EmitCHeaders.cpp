@@ -264,9 +264,31 @@ class EmitCHeader final : public EmitCConstInit {
         puts("};\n");
     }
 
+    // format: VL_ASSIGNSEL_XX(rbits, obits, lsb, lhsdata, rhsdata, roffset);
+    void emitVlAssign(const AstNodeDType* const lhstype, const AstNodeDType* rhstype,
+                      const std::string& loff, const std::string& roff, const std::string& lhsdata,
+                      const std::string& rhsdata) {
+        puts("VL_ASSIGNSEL_");
+        puts(lhstype->charIQWN());
+        puts(rhstype->charIQWN());
+        // Put lhs width
+        puts("(" + std::to_string(lhstype->width()) + ", ");
+        // Put number of copy bits
+        puts(std::to_string(rhstype->width()) + ", ");
+        // Put left offset
+        puts(loff + ", ");
+        // Put lhs data
+        puts(lhsdata + ", ");
+        // Put rhs data
+        puts(rhsdata + ", ");
+        // Put right offset
+        puts(roff + ");\n");
+    }
+
     // `retOrArg` should be prefixed by `&` or suffixed by `.data()` depending on its type
-    void emitPackedMember(const AstNodeDType* dtypep, const std::string& fieldname,
-                          const std::string& offset, bool getfunc, const std::string& retOrArg) {
+    void emitPackedMember(const AstNodeDType* parentDtypep, const AstNodeDType* dtypep,
+                          const std::string& fieldname, const std::string& offset, bool getfunc,
+                          const std::string& retOrArg) {
         dtypep = dtypep->skipRefp();
         if (const auto* adtypep = VN_CAST(dtypep, PackArrayDType)) {
             std::string index = m_names.get("__i");
@@ -277,39 +299,36 @@ class EmitCHeader final : public EmitCConstInit {
             std::string offsetInLoop
                 = offset + " + " + index + " * " + std::to_string(adtypep->subDTypep()->width());
             std::string newName = fieldname + "[" + index + "]";
-            emitPackedMember(adtypep->subDTypep(), newName, offsetInLoop, getfunc, retOrArg);
+            emitPackedMember(parentDtypep, adtypep->subDTypep(), newName, offsetInLoop, getfunc,
+                             retOrArg);
             puts("}\n");
-        } else if (auto* adtypep = VN_CAST(dtypep, NodeUOrStructDType)) {
+        } else if (VN_IS(dtypep, NodeUOrStructDType)) {
             std::string tmp = m_names.get("__tmp");
-            std::string suffixName = dtypep->isWide() ? tmp + ".data()" : "&" + tmp;
+            std::string suffixName = dtypep->isWide() ? tmp + ".data()" : tmp;
             if (getfunc) {  // Emit `get` func;
                 // auto __tmp = field.get();
                 puts("auto " + tmp + " = " + fieldname + ".get();\n");
-                // bitHelper(&ret, offset, &__tmp, 0, width);
-                puts("bitHelper(" + retOrArg + ", " + offset + ", " + suffixName + ", 0, "
-                     + std::to_string(adtypep->width()) + ");\n");
+                // VL_ASSIGNSEL_XX(rbits, obits, lsb, DType lhs, DType2 rhs, roffset);
+                emitVlAssign(parentDtypep, dtypep, offset, "0", retOrArg, suffixName);
             } else {  // Emit `set` func
-                std::string tmptype = AstCDType::typeToHold(adtypep->width());
+                std::string tmptype = AstCDType::typeToHold(dtypep->width());
                 // type tmp;
                 puts(tmptype + " " + tmp + ";\n");
-                // bitHelper(&__tmp, 0, &retOrArg, offset, width);
-                puts("bitHelper(" + suffixName + ", 0, " + retOrArg + ", " + offset + ", "
-                     + std::to_string(adtypep->width()) + ");\n");
+                // VL_ASSIGNSEL_XX(rbits, obits, lsb, DType lhs, DType2 rhs, roffset);
+                emitVlAssign(dtypep, parentDtypep, "0", offset, suffixName, retOrArg);
                 // field.set(__tmp);
                 puts(fieldname + ".set(" + tmp + ");\n");
             }
         } else {
             UASSERT_OBJ(VN_IS(dtypep, EnumDType) || VN_IS(dtypep, BasicDType), dtypep,
                         "Unsupported type in packed struct or union");
-            std::string suffixName = dtypep->isWide() ? fieldname + ".data()" : "&" + fieldname;
+            std::string suffixName = dtypep->isWide() ? fieldname + ".data()" : fieldname;
             if (getfunc) {  // Emit `get` func;
-                // bitHelper(&ret, offset, &field, 0, width);
-                puts("bitHelper(" + retOrArg + ", " + offset + ", " + suffixName + ", 0, "
-                     + std::to_string(dtypep->width()) + ");\n");
+                // VL_ASSIGNSEL_XX(rbits, obits, lsb, DType lhs, DType2 rhs, roffset);
+                emitVlAssign(parentDtypep, dtypep, offset, "0", retOrArg, suffixName);
             } else {  // Emit `set` func
-                // bitHelper(&field, 0, &retOrArg, offset, width);
-                puts("bitHelper(" + suffixName + ", 0, " + retOrArg + ", " + offset + ", "
-                     + std::to_string(dtypep->width()) + ");\n");
+                // VL_ASSIGNSEL_XX(rbits, obits, lsb, DType lhs, DType2 rhs, roffset);
+                emitVlAssign(dtypep, parentDtypep, "0", offset, suffixName, retOrArg);
             }
         }
     }
@@ -333,8 +352,7 @@ class EmitCHeader final : public EmitCConstInit {
              + "() { memset(reinterpret_cast<void*>(this), 0, sizeof(*this)); }\n");
 
         const std::string retArgName = m_names.get("__v");
-        const std::string suffixName
-            = sdtypep->isWide() ? retArgName + ".data()" : "&" + retArgName;
+        const std::string suffixName = sdtypep->isWide() ? retArgName + ".data()" : retArgName;
         const std::string retArgType = AstCDType::typeToHold(sdtypep->width());
 
         // Emit `get` member function
@@ -342,12 +360,12 @@ class EmitCHeader final : public EmitCConstInit {
         puts(retArgType + " " + retArgName + ";\n");
         if (VN_IS(sdtypep, StructDType)) {
             for (itemp = lastItemp; itemp; itemp = VN_CAST(itemp->backp(), MemberDType)) {
-                emitPackedMember(itemp->dtypep(), itemp->nameProtect(),
+                emitPackedMember(sdtypep, itemp->dtypep(), itemp->nameProtect(),
                                  std::to_string(itemp->lsb()), /*getfunc=*/true, suffixName);
             }
         } else {
             // We only need to fill the widest field of union
-            emitPackedMember(witemp->dtypep(), witemp->nameProtect(),
+            emitPackedMember(sdtypep, witemp->dtypep(), witemp->nameProtect(),
                              std::to_string(witemp->lsb()), /*getfunc=*/true, suffixName);
         }
         puts("return " + retArgName + ";\n");
@@ -357,12 +375,12 @@ class EmitCHeader final : public EmitCConstInit {
         puts("void set(const " + retArgType + "& " + retArgName + ") {\n");
         if (VN_IS(sdtypep, StructDType)) {
             for (itemp = lastItemp; itemp; itemp = VN_CAST(itemp->backp(), MemberDType)) {
-                emitPackedMember(itemp->dtypep(), itemp->nameProtect(),
+                emitPackedMember(sdtypep, itemp->dtypep(), itemp->nameProtect(),
                                  std::to_string(itemp->lsb()), /*getfunc=*/false, suffixName);
             }
         } else {
             // We only need to fill the widest field of union
-            emitPackedMember(witemp->dtypep(), witemp->nameProtect(),
+            emitPackedMember(sdtypep, witemp->dtypep(), witemp->nameProtect(),
                              std::to_string(witemp->lsb()), /*getfunc=*/false, suffixName);
         }
 
